@@ -1,0 +1,4 @@
+# exclude all data but preserve directory for mount
+/ansible/data/**
+!/ansible/data/**/
+!/ansible/data/**/.gitkeep

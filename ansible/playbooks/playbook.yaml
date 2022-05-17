@@ -1,0 +1,94 @@
+---
+- hosts: all
+  become: true
+  become_method: sudo
+  vars:
+    created_username: iamgroot
+
+  tasks:
+    - name: Check unattended-upgrades status
+      ansible.builtin.shell: if grep -q 1 /etc/apt/apt.conf.d/20auto-upgrades; then echo 'yes'; else echo 'no'; fi
+      register: unattended_upgrades_status
+
+    - name: Update system packages
+      ansible.builtin.apt:
+        name: '*'
+        state: latest
+        force_apt_get: yes
+        update_cache: yes
+        autoclean: yes
+        autoremove: yes
+      async: 900
+      poll: 30
+      when: unattended_upgrades_status == 'no'
+
+    - name: Install aptitude
+      ansible.builtin.apt:
+        name: aptitude
+        state: latest
+        update_cache: yes
+      async: 600
+      poll: 30
+
+    - name: Setup passwordless sudo
+      ansible.builtin.lineinfile:
+        path: /etc/sudoers
+        state: present
+        regexp: '^%sudo'
+        line: '%sudo ALL=(ALL) NOPASSWD: ALL'
+        validate: '/usr/sbin/visudo -cf %s'
+
+    - name: Create a new regular user with sudo privileges
+      ansible.builtin.user:
+        name: "{{ created_username }}"
+        state: present
+        groups: sudo
+        append: yes
+        create_home: yes
+
+    - name: Set authorized key for remote user
+      ansible.posix.authorized_key:
+        user: "{{ created_username }}"
+        state: present
+        key: "{{ lookup('file', lookup('env','HOME') + '/.ssh/id_ed25519.pub') }}"
+
+    - name: Disable password authentication for root
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        state: present
+        regexp: '^#?PermitRootLogin'
+        line: 'PermitRootLogin prohibit-password'
+
+    - name: Restart SSHD
+      ansible.builtin.service:
+        name: sshd
+        state: restarted
+
+    - name: Ensure UFW is Installed
+      ansible.builtin.apt:
+        pkg:
+          - ufw
+        state: latest
+        update_cache: yes
+      async: 400
+      poll: 30
+
+    - name: Add Unattended Upgrades Package
+      ansible.builtin.apt:
+        pkg:
+          - unattended-upgrades
+        state: latest
+        update_cache: yes
+      async: 400
+      poll: 30
+
+    - name: UFW - Allow SSH connections
+      community.general.ufw:
+        rule: allow
+        name: OpenSSH
+        log: yes
+
+    - name: UFW - Enable and deny by default
+      community.general.ufw:
+        state: enabled
+        default: deny
